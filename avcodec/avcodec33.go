@@ -11,28 +11,8 @@ import "C"
 import (
 	"unsafe"
 
-	"github.com/imkira/go-libav/avutil"
+	"github.com/tigerjang/go-libav/avutil"
 )
-
-type CodecParameters struct {
-	CAVCodecParameters *C.AVCodecParameters
-}
-
-func NewCodecParameters() (*CodecParameters, error) {
-	cPkt := (*C.AVCodecParameters)(C.avcodec_parameters_alloc())
-	if cPkt == nil {
-		return nil, ErrAllocationError
-	}
-	return NewCodecParametersFromC(unsafe.Pointer(cPkt)), nil
-}
-
-func NewCodecParametersFromC(cPSD unsafe.Pointer) *CodecParameters {
-	return &CodecParameters{CAVCodecParameters: (*C.AVCodecParameters)(cPSD)}
-}
-
-func (cParams *CodecParameters) Free() {
-	C.avcodec_parameters_free(&cParams.CAVCodecParameters)
-}
 
 func (ctx *Context) CopyTo(dst *Context) error {
 	// added in lavc 57.33.100

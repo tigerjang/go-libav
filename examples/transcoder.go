@@ -14,10 +14,10 @@ import (
 	"flag"
 	"log"
 
-	"github.com/imkira/go-libav/avcodec"
-	"github.com/imkira/go-libav/avfilter"
-	"github.com/imkira/go-libav/avformat"
-	"github.com/imkira/go-libav/avutil"
+	"github.com/tigerjang/go-libav/avcodec"
+	"github.com/tigerjang/go-libav/avfilter"
+	"github.com/tigerjang/go-libav/avformat"
+	"github.com/tigerjang/go-libav/avutil"
 )
 
 var inputFileName, outputFileName string

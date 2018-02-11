@@ -16,6 +16,11 @@ package avformat
 //  return streams[n];
 //}
 //
+// // static const AVCodec *go_av_codec_get(const AVCodec **codecs, unsigned int n)
+// // {
+// //   return codecs[n];
+// // }
+//
 //static AVDictionary **go_av_alloc_dicts(int length)
 //{
 //  size_t size = sizeof(AVDictionary*) * length;
@@ -45,8 +50,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/imkira/go-libav/avcodec"
-	"github.com/imkira/go-libav/avutil"
+	"github.com/tigerjang/go-libav/avcodec"
+	"github.com/tigerjang/go-libav/avutil"
 )
 
 var (
@@ -461,6 +466,15 @@ func (s *Stream) ID() int {
 	return int(s.CAVStream.id)
 }
 
+func (s *Stream) CodecID() avcodec.CodecID {
+	return (avcodec.CodecID)(s.CAVStream.codecpar.codec_id)
+}
+
+func (s *Stream) CodecParameters() *avcodec.CodecParameters {
+	return avcodec.NewCodecParametersFromC(unsafe.Pointer(s.CAVStream.codecpar))
+}
+
+// Fixme: deprecated ???
 func (s *Stream) CodecContext() *avcodec.Context {
 	if s.CAVStream.codec == nil {
 		return nil
@@ -841,6 +855,16 @@ func (ctx *Context) FindStreamInfo(options []*avutil.Dictionary) error {
 		return avutil.NewErrorFromCode(avutil.ErrorCode(code))
 	}
 	return nil
+}
+
+func (ctx *Context) FindBestStream(mediaType avutil.MediaType, wantedStreamNb, relatedStream, flags int) (int, *avcodec.Codec, error) {
+	var cCodec *C.AVCodec
+	streamId := int(C.av_find_best_stream(ctx.CAVFormatContext, int32(mediaType), C.int(wantedStreamNb), C.int(relatedStream), &cCodec, C.int(flags)))
+	if streamId < 0 {
+		return -1, nil, avutil.NewErrorFromCode(avutil.ErrorCode(streamId))
+	}
+	codec := avcodec.NewCodecFromC(unsafe.Pointer(cCodec))
+	return streamId, codec, nil
 }
 
 func (ctx *Context) Dump(streamIndex int, url string, isOutput bool) {

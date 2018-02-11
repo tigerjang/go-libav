@@ -2,6 +2,7 @@ package avcodec
 
 //#include <libavutil/avutil.h>
 //#include <libavcodec/avcodec.h>
+//#include <libavutil/hwcontext.h>
 //
 //#ifdef CODEC_CAP_HWACCEL
 //#define GO_CODEC_CAP_HWACCEL CODEC_CAP_HWACCEL
@@ -127,7 +128,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/imkira/go-libav/avutil"
+	"github.com/tigerjang/go-libav/avutil"
 )
 
 var (
@@ -2044,3 +2045,85 @@ func boolToCInt(b bool) C.int {
 	}
 	return 0
 }
+
+// ************** HWDeviceContent **************
+type HWDeviceContext struct {
+	CAVBufferRef *C.AVBufferRef
+}
+
+func (ctx *Context) NewHWDeviceContext(deviceType avutil.HWDeviceType, device string, options *avutil.Dictionary, flags int) (*HWDeviceContext, error) {
+	var hwDeviceCtx *C.AVBufferRef
+
+	var cDevice *C.char
+	if device == "" {
+		cDevice = nil
+	} else {
+		cDevice = C.CString(device)
+		defer C.free(unsafe.Pointer(cDevice))
+	}
+
+	var cOptions *C.AVDictionary
+	if options != nil {
+		cOptions = *(**C.AVDictionary)(options.Pointer())
+	}
+
+	if code := int(C.av_hwdevice_ctx_create(&hwDeviceCtx, (C.enum_AVHWDeviceType)(deviceType), cDevice, cOptions, C.int(flags))); code < 0 {
+		return nil, ErrAllocationError
+	}
+	ctx.CAVCodecContext.hw_device_ctx = C.av_buffer_ref(hwDeviceCtx)
+	return &HWDeviceContext{hwDeviceCtx}, nil
+}
+
+// TODO: Free !!!!!!!!!!!
+// ************** HWDeviceContent **************
+// ************** FFMPEG >=33 APIS  **************
+
+type CodecParameters struct {
+	CAVCodecParameters *C.AVCodecParameters
+}
+
+func NewCodecParameters() (*CodecParameters, error) {
+	cPkt := (*C.AVCodecParameters)(C.avcodec_parameters_alloc())
+	if cPkt == nil {
+		return nil, ErrAllocationError
+	}
+	return NewCodecParametersFromC(unsafe.Pointer(cPkt)), nil
+}
+
+func NewCodecParametersFromC(cPSD unsafe.Pointer) *CodecParameters {
+	return &CodecParameters{CAVCodecParameters: (*C.AVCodecParameters)(cPSD)}
+}
+
+func (cParams *CodecParameters) Free() {
+	C.avcodec_parameters_free(&cParams.CAVCodecParameters)
+}
+
+func (ctx *Context) SetParameters(parameters *CodecParameters) error {
+	cParams := parameters.CAVCodecParameters
+	code := C.avcodec_parameters_to_context(ctx.CAVCodecContext, cParams)
+	if code < 0 {
+		return avutil.NewErrorFromCode(avutil.ErrorCode(code))
+	}
+	return nil
+}
+
+func (ctx *Context) SendPacket(pkt *Packet) error {
+	cPkt := (*C.AVPacket)(unsafe.Pointer(pkt.CAVPacket))
+	code := C.avcodec_send_packet(ctx.CAVCodecContext, cPkt)
+	if code < 0 {
+		err := avutil.NewErrorFromCode(avutil.ErrorCode(code))
+		return err
+	}
+	return nil
+}
+
+func (ctx *Context) ReceiveFrame(frame *avutil.Frame) error {
+	cFrame := (*C.AVFrame)(unsafe.Pointer(frame.CAVFrame))
+	code := C.avcodec_receive_frame(ctx.CAVCodecContext, cFrame)
+	if code < 0 {
+		err := avutil.NewErrorFromCode(avutil.ErrorCode(code))
+		return err
+	}
+	return nil
+}
+// ************** FFMPEG >=33 APIS  **************
