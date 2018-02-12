@@ -2074,6 +2074,13 @@ func (ctx *Context) NewHWDeviceContext(deviceType avutil.HWDeviceType, device st
 	return &HWDeviceContext{hwDeviceCtx}, nil
 }
 
+func HWFrameTransferData(dst, src *avutil.Frame, flags int) error {
+	if code := C.av_hwframe_transfer_data((*C.AVFrame)(unsafe.Pointer(dst.CAVFrame)), (*C.AVFrame)(unsafe.Pointer(src.CAVFrame)), C.int(flags)); code < 0 {
+		return avutil.NewErrorFromCode(avutil.ErrorCode(code))
+	}
+	return nil
+}
+
 // TODO: Free !!!!!!!!!!!
 // ************** HWDeviceContent **************
 // ************** FFMPEG >=33 APIS  **************
@@ -2117,12 +2124,34 @@ func (ctx *Context) SendPacket(pkt *Packet) error {
 	return nil
 }
 
-func (ctx *Context) ReceiveFrame(frame *avutil.Frame) error {
+func (ctx *Context) ReceiveFrame(frame *avutil.Frame) (level int, retErr error) {
 	cFrame := (*C.AVFrame)(unsafe.Pointer(frame.CAVFrame))
 	code := C.avcodec_receive_frame(ctx.CAVCodecContext, cFrame)
 	if code < 0 {
 		err := avutil.NewErrorFromCode(avutil.ErrorCode(code))
-		return err
+		switch code {
+		case -11:
+			return 1, err
+			break
+		default:
+			return 1024, err
+		}
+	}
+	return 0, nil
+}
+
+func (ctx *Context) SendFrame(frame *avutil.Frame) error {
+	cFrame := (*C.AVFrame)(unsafe.Pointer(frame.CAVFrame))
+	if code := C.avcodec_send_frame(ctx.CAVCodecContext, cFrame); code < 0 {
+		return avutil.NewErrorFromCode(avutil.ErrorCode(code))
+	}
+	return nil
+}
+
+func (ctx *Context) ReceivePacket(pkt *Packet) *avutil.Error {
+	cPkt := (*C.AVPacket)(unsafe.Pointer(pkt.CAVPacket))
+	if code := C.avcodec_receive_packet(ctx.CAVCodecContext, cPkt); code < 0 {
+		return avutil.NewErrorFromCode(avutil.ErrorCode(code))
 	}
 	return nil
 }
