@@ -1,47 +1,54 @@
 package avformat
 
-//#include <libavutil/avutil.h>
-//#include <libavutil/avstring.h>
-//#include <libavcodec/avcodec.h>
-//#include <libavformat/avformat.h>
-//
-//#ifdef AVFMT_FLAG_FAST_SEEK
-//#define GO_AVFMT_FLAG_FAST_SEEK AVFMT_FLAG_FAST_SEEK
-//#else
-//#define GO_AVFMT_FLAG_FAST_SEEK 0
-//#endif
-//
-//static const AVStream *go_av_streams_get(const AVStream **streams, unsigned int n)
-//{
-//  return streams[n];
-//}
-//
-// // static const AVCodec *go_av_codec_get(const AVCodec **codecs, unsigned int n)
-// // {
-// //   return codecs[n];
-// // }
-//
-//static AVDictionary **go_av_alloc_dicts(int length)
-//{
-//  size_t size = sizeof(AVDictionary*) * length;
-//  return (AVDictionary**)av_malloc(size);
-//}
-//
-//static void go_av_dicts_set(AVDictionary** arr, unsigned int n, AVDictionary *val)
-//{
-//  arr[n] = val;
-//}
-//
-// size_t sizeOfAVFormatContextFilename = sizeof(((AVFormatContext *)NULL)->filename);
-//
-// int GO_AVFORMAT_VERSION_MAJOR = LIBAVFORMAT_VERSION_MAJOR;
-// int GO_AVFORMAT_VERSION_MINOR = LIBAVFORMAT_VERSION_MINOR;
-// int GO_AVFORMAT_VERSION_MICRO = LIBAVFORMAT_VERSION_MICRO;
-//
-//typedef int (*AVFormatContextIOOpenCallback)(struct AVFormatContext *s, AVIOContext **pb, const char *url, int flags, AVDictionary **options);
-//typedef void (*AVFormatContextIOCloseCallback)(struct AVFormatContext *s, AVIOContext *pb);
-//
-// #cgo pkg-config: libavformat libavutil
+/*
+#include <libavutil/avutil.h>
+#include <libavutil/avstring.h>
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+
+#ifdef AVFMT_FLAG_FAST_SEEK
+#define GO_AVFMT_FLAG_FAST_SEEK AVFMT_FLAG_FAST_SEEK
+#else
+#define GO_AVFMT_FLAG_FAST_SEEK 0
+#endif
+
+static const AVStream *go_av_streams_get(const AVStream **streams, unsigned int n)
+{
+	return streams[n];
+}
+
+static AVDictionary **go_av_alloc_dicts(int length)
+{
+	size_t size = sizeof(AVDictionary*) * length;
+	return (AVDictionary**)av_malloc(size);
+}
+
+static void go_av_dicts_set(AVDictionary** arr, unsigned int n, AVDictionary *val)
+{
+	arr[n] = val;
+}
+
+size_t sizeOfAVFormatContextFilename = sizeof(((AVFormatContext *)NULL)->filename);
+
+int GO_AVFORMAT_VERSION_MAJOR = LIBAVFORMAT_VERSION_MAJOR;
+int GO_AVFORMAT_VERSION_MINOR = LIBAVFORMAT_VERSION_MINOR;
+int GO_AVFORMAT_VERSION_MICRO = LIBAVFORMAT_VERSION_MICRO;
+
+typedef int (*AVFormatContextIOOpenCallback)(struct AVFormatContext *s, AVIOContext **pb, const char *url, int flags, AVDictionary **options);
+typedef void (*AVFormatContextIOCloseCallback)(struct AVFormatContext *s, AVIOContext *pb);
+
+extern int avio_ctx_rcb_wrapper(void *, uint8_t *, int);
+extern int avio_ctx_wcb_wrapper(void *, uint8_t *, int);
+extern int64_t avio_ctx_scb_wrapper(void *, int64_t, int);
+
+static AVIOContext* cgo_avio_alloc_context_wrapper(unsigned char * buffer, int buffer_size,
+	int write_flag, void * opaque) {
+	return avio_alloc_context(buffer, buffer_size, write_flag, opaque,
+		avio_ctx_rcb_wrapper, avio_ctx_wcb_wrapper, avio_ctx_scb_wrapper);
+}
+
+#cgo pkg-config: libavformat libavutil
+*/
 import "C"
 
 import (
@@ -897,6 +904,7 @@ func (ctx *Context) SeekToTimestamp(streamIndex int, min, target, max int64, fla
 
 type IOContext struct {
 	CAVIOContext *C.AVIOContext
+	CustomHandler *customIOContextOpaque
 }
 
 func OpenIOContext(url string, flags IOFlags, cb *IOInterruptCallback, options *avutil.Dictionary) (*IOContext, error) {
@@ -922,6 +930,34 @@ func NewIOContextFromC(cCtx unsafe.Pointer) *IOContext {
 	return &IOContext{CAVIOContext: (*C.AVIOContext)(cCtx)}
 }
 
+type IOCtxReadWriteCallback func(buffer []byte, size int) int
+type IOCtxSeedCallback func(offset int64, whence int) int64
+
+type customIOContextOpaque struct {
+	avioBuffer *C.uchar
+	readCallback IOCtxReadWriteCallback
+	writeCallback IOCtxReadWriteCallback
+	seekCallback IOCtxSeedCallback
+}
+
+const SeekWhenceSize int = C.AVSEEK_SIZE
+
+func NewCustomIOContext(bufferSize, writeFlag int,
+		readCallback, writeCallback IOCtxReadWriteCallback,
+		seekCallback IOCtxSeedCallback) (*IOContext, error) {
+	buffer := (*C.uchar)(C.av_malloc(C.size_t(bufferSize)))
+	customCtx := &customIOContextOpaque{buffer, readCallback,
+		writeCallback, seekCallback}
+	//avioCtx := C.avio_alloc_context(buffer, C.int(bufferSize), C.int(writeFlag), unsafe.Pointer(customCtx),
+	//	C.avio_ctx_rcb_wrapper, C.avio_ctx_wcb_wrapper, C.avio_ctx_scb_wrapper)
+	avioCtx := C.cgo_avio_alloc_context_wrapper(buffer, C.int(bufferSize), C.int(writeFlag), unsafe.Pointer(customCtx))
+
+	if avioCtx == nil {
+		return nil, avutil.NewErrorFromCode(avutil.ErrorCode(-1)) // TODO 合适的code
+	}
+	return &IOContext{CAVIOContext: avioCtx, CustomHandler: customCtx}, nil
+}
+
 func (ctx *IOContext) Size() int64 {
 	return int64(C.avio_size(ctx.CAVIOContext))
 }
@@ -932,6 +968,9 @@ func (ctx *IOContext) Close() error {
 		if code < 0 {
 			return avutil.NewErrorFromCode(avutil.ErrorCode(code))
 		}
+	}
+	if ctx.CustomHandler != nil {
+		C.av_free(unsafe.Pointer(ctx.CustomHandler.avioBuffer))  // TODO: right place ?
 	}
 	return nil
 }
