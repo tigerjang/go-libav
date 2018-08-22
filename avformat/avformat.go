@@ -37,16 +37,32 @@ int GO_AVFORMAT_VERSION_MICRO = LIBAVFORMAT_VERSION_MICRO;
 typedef int (*AVFormatContextIOOpenCallback)(struct AVFormatContext *s, AVIOContext **pb, const char *url, int flags, AVDictionary **options);
 typedef void (*AVFormatContextIOCloseCallback)(struct AVFormatContext *s, AVIOContext *pb);
 
-extern int avio_ctx_rcb_wrapper(void *, uint8_t *, int);
-extern int avio_ctx_wcb_wrapper(void *, uint8_t *, int);
-extern int64_t avio_ctx_scb_wrapper(void *, int64_t, int);
-
-static AVIOContext* cgo_avio_alloc_context_wrapper(unsigned char * buffer, int buffer_size,
-	int write_flag, void * opaque) {
-	return avio_alloc_context(buffer, buffer_size, write_flag, opaque,
-		avio_ctx_rcb_wrapper, avio_ctx_wcb_wrapper, avio_ctx_scb_wrapper);
+// 因为 syscall 只允许返回uintptr, 这里要将返回的int64_t 转换为int
+int AVIOCtxReadCallbackWrapper(void * opaque, uint8_t * buf, int buf_size) {
+	//printf("opaque[0]: %d\n", (unsigned int)(((void **)opaque)[0]));
+	int64_t(*cb)(uint8_t *, int) = (int64_t(*)(uint8_t *, int))(((void **)opaque)[0]);
+	return (int)cb(buf, buf_size);
 }
 
+int AVIOCtxWriteCallbackWrapper(void * opaque, uint8_t * buf, int buf_size) {
+	int64_t(*cb)(uint8_t *, int) = (int64_t(*)(uint8_t *, int))(((void **)opaque)[1]);
+	return (int)cb(buf, buf_size);
+}
+
+int64_t AVIOCtxSeekCallbackWrapper(void * opaque, int64_t offset, int whence) {
+	int64_t(*cb)(int64_t, int) = (int64_t(*)(int64_t, int))(((void **)opaque)[2]);
+	return cb(offset, whence);
+}
+
+typedef int(*AVIOCtxReadWriteCallback)(void *, uint8_t *, int);
+typedef int64_t(*AVIOCtxSeekCallback)(void *, int64_t, int);
+
+//static AVIOContext* cgo_avio_alloc_context_wrapper(unsigned char * buffer, int buffer_size,
+//	int write_flag, void * opaque, bool hasRCB, bool hasWCB, bool hasSCB) {
+//	int (rcb)(void * opaque, uint8_t * buf, int buf_size)
+//	return avio_alloc_context(buffer, buffer_size, write_flag, opaque,
+//		AVIOCtxReadCallbackWrapper, AVIOCtxWriteCallbackWrapper, AVIOCtxSeekCallbackWrapper);
+//}
 #cgo pkg-config: libavformat libavutil
 */
 import "C"
@@ -59,6 +75,7 @@ import (
 
 	"github.com/tigerjang/go-libav/avcodec"
 	"github.com/tigerjang/go-libav/avutil"
+	"syscall"
 )
 
 var (
@@ -72,7 +89,7 @@ const (
 	FlagNoFile       Flags = C.AVFMT_NOFILE
 	FlagNeedNumber   Flags = C.AVFMT_NEEDNUMBER
 	FlagShowIDs      Flags = C.AVFMT_SHOW_IDS
-	FlagRawPicture   Flags = C.AVFMT_RAWPICTURE
+	//FlagRawPicture   Flags = C.AVFMT_RAWPICTURE
 	FlagGlobalHeader Flags = C.AVFMT_GLOBALHEADER
 	FlagNoTimestamps Flags = C.AVFMT_NOTIMESTAMPS
 	FlagGenericIndex Flags = C.AVFMT_GENERIC_INDEX
@@ -904,7 +921,9 @@ func (ctx *Context) SeekToTimestamp(streamIndex int, min, target, max int64, fla
 
 type IOContext struct {
 	CAVIOContext *C.AVIOContext
-	CustomHandler *customIOContextOpaque
+	//CustomHandler *customIOContextOpaque
+	CustomIOContextOpaque *[3]uintptr
+	customIOContextBuffer *C.uchar
 }
 
 func OpenIOContext(url string, flags IOFlags, cb *IOInterruptCallback, options *avutil.Dictionary) (*IOContext, error) {
@@ -931,31 +950,65 @@ func NewIOContextFromC(cCtx unsafe.Pointer) *IOContext {
 }
 
 type IOCtxReadWriteCallback func(buffer []byte, size int) int
-type IOCtxSeedCallback func(offset int64, whence int) int64
-
-type customIOContextOpaque struct {
-	avioBuffer *C.uchar
-	readCallback IOCtxReadWriteCallback
-	writeCallback IOCtxReadWriteCallback
-	seekCallback IOCtxSeedCallback
-}
-
+type IOCtxSeekCallback func(offset int64, whence int) int64
 const SeekWhenceSize int = C.AVSEEK_SIZE
 
 func NewCustomIOContext(bufferSize, writeFlag int,
-		readCallback, writeCallback IOCtxReadWriteCallback,
-		seekCallback IOCtxSeedCallback) (*IOContext, error) {
-	buffer := (*C.uchar)(C.av_malloc(C.size_t(bufferSize)))
-	customCtx := &customIOContextOpaque{buffer, readCallback,
-		writeCallback, seekCallback}
-	//avioCtx := C.avio_alloc_context(buffer, C.int(bufferSize), C.int(writeFlag), unsafe.Pointer(customCtx),
-	//	C.avio_ctx_rcb_wrapper, C.avio_ctx_wcb_wrapper, C.avio_ctx_scb_wrapper)
-	avioCtx := C.cgo_avio_alloc_context_wrapper(buffer, C.int(bufferSize), C.int(writeFlag), unsafe.Pointer(customCtx))
+	readCallback, writeCallback IOCtxReadWriteCallback,
+	seekCallback IOCtxSeekCallback) (*IOContext, error) {
 
+	buffer := (*C.uchar)(C.av_malloc(C.size_t(bufferSize)))
+
+	var opaque [3]uintptr = [3]uintptr{0, 0, 0}
+	var ReadCb uintptr = 0
+	var WriteCb uintptr = 0
+	var SeekCb uintptr = 0
+
+	if readCallback != nil {
+		(opaque)[0] = syscall.NewCallback(func (buffer *byte, size C.int) int64 {
+			return int64(readCallback(CBuf2GoBuf(buffer, size), int(size)))
+		})
+		ReadCb = uintptr(unsafe.Pointer(C.AVIOCtxReadCallbackWrapper))
+	}
+
+	if writeCallback != nil {
+		(opaque)[1] = syscall.NewCallback(func (buffer *byte, size C.int) int64 {
+			return int64(writeCallback(CBuf2GoBuf(buffer, size), int(size)))
+		})
+		WriteCb = uintptr(unsafe.Pointer(C.AVIOCtxWriteCallbackWrapper))
+	}
+
+	if seekCallback != nil {
+		(opaque)[2] = syscall.NewCallback(func (offset C.int64_t, whence C.int) int64 {
+			return seekCallback(int64(offset), int(whence))
+		})
+		SeekCb = uintptr(unsafe.Pointer(C.AVIOCtxSeekCallbackWrapper))
+	}
+
+	//fmt.Println(uint64(opaque[0]))
+	ret, _, _ := syscall.Syscall9(uintptr(unsafe.Pointer(C.avio_alloc_context)), 7,
+		uintptr(unsafe.Pointer(buffer)),
+		uintptr(bufferSize),
+		uintptr(writeFlag),
+		uintptr(unsafe.Pointer(&opaque)),
+		ReadCb,
+		WriteCb,
+		SeekCb,
+		0, 0)
+	avioCtx := (*C.AVIOContext)(unsafe.Pointer(ret))
+	//avioCtx := C.avio_alloc_context(buffer, C.int(bufferSize), C.int(writeFlag), unsafe.Pointer(opaque),
+	//	ReadCb, WriteCb, SeekCb)
+	//avioCtx := C.cgo_avio_alloc_context_wrapper(buffer, C.int(bufferSize), C.int(writeFlag),
+	//	unsafe.Pointer(opaque), C.bool(hasReadCb), C.bool(hasWriteCb), C.bool(hasSeekCb))
 	if avioCtx == nil {
 		return nil, avutil.NewErrorFromCode(avutil.ErrorCode(-1)) // TODO 合适的code
 	}
-	return &IOContext{CAVIOContext: avioCtx, CustomHandler: customCtx}, nil
+	return &IOContext{CAVIOContext: avioCtx,
+		CustomIOContextOpaque: &opaque, customIOContextBuffer: buffer}, nil
+}
+
+func CBuf2GoBuf (buf *byte, size C.int) []byte {
+	return (*[1 << 30]byte)(unsafe.Pointer(buf))[:size:size]
 }
 
 func (ctx *IOContext) Size() int64 {
@@ -969,8 +1022,8 @@ func (ctx *IOContext) Close() error {
 			return avutil.NewErrorFromCode(avutil.ErrorCode(code))
 		}
 	}
-	if ctx.CustomHandler != nil {
-		C.av_free(unsafe.Pointer(ctx.CustomHandler.avioBuffer))  // TODO: right place ?
+	if ctx.customIOContextBuffer != nil {
+		C.av_free(unsafe.Pointer(ctx.customIOContextBuffer))  // TODO: right place ?
 	}
 	return nil
 }
