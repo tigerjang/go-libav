@@ -2,7 +2,6 @@ package avcodec
 
 //#include <libavutil/avutil.h>
 //#include <libavcodec/avcodec.h>
-//#include <libavutil/hwcontext.h>
 //
 //#ifdef CODEC_CAP_HWACCEL
 //#define GO_CODEC_CAP_HWACCEL CODEC_CAP_HWACCEL
@@ -684,6 +683,8 @@ func (c *Codec) ProfileNameOK(id int) (string, bool) {
 type Context struct {
 	CAVCodecContext *C.AVCodecContext
 	*avutil.OptionAccessor
+	opaque *[8]uintptr  // useer custom data: [0]: go struct ptr, [1]: get_format go callback
+	hwPxlFmt avutil.PixelFormat
 }
 
 func NewContextWithCodec(codec *Codec) (*Context, error) {
@@ -699,10 +700,13 @@ func NewContextWithCodec(codec *Codec) (*Context, error) {
 }
 
 func NewContextFromC(cCtx unsafe.Pointer) *Context {
-	return &Context{
+	ctx := &Context{
 		CAVCodecContext: (*C.AVCodecContext)(cCtx),
 		OptionAccessor:  avutil.NewOptionAccessor(cCtx, false),
 	}
+	ctx.opaque = &([8]uintptr{uintptr(unsafe.Pointer(ctx)), 0, 0, 0, 0, 0, 0, 0})
+	ctx.CAVCodecContext.opaque = unsafe.Pointer(ctx.opaque)
+	return ctx
 }
 
 func (ctx *Context) Free() {
@@ -2051,43 +2055,6 @@ func boolToCInt(b bool) C.int {
 	return 0
 }
 
-// ************** HWDeviceContent **************
-type HWDeviceContext struct {
-	CAVBufferRef *C.AVBufferRef
-}
-
-func (ctx *Context) NewHWDeviceContext(deviceType avutil.HWDeviceType, device string, options *avutil.Dictionary, flags int) (*HWDeviceContext, error) {
-	var hwDeviceCtx *C.AVBufferRef
-
-	var cDevice *C.char
-	if device == "" {
-		cDevice = nil
-	} else {
-		cDevice = C.CString(device)
-		defer C.free(unsafe.Pointer(cDevice))
-	}
-
-	var cOptions *C.AVDictionary
-	if options != nil {
-		cOptions = *(**C.AVDictionary)(options.Pointer())
-	}
-
-	if code := int(C.av_hwdevice_ctx_create(&hwDeviceCtx, (C.enum_AVHWDeviceType)(deviceType), cDevice, cOptions, C.int(flags))); code < 0 {
-		return nil, ErrAllocationError
-	}
-	ctx.CAVCodecContext.hw_device_ctx = C.av_buffer_ref(hwDeviceCtx)
-	return &HWDeviceContext{hwDeviceCtx}, nil
-}
-
-func HWFrameTransferData(dst, src *avutil.Frame, flags int) error {
-	if code := C.av_hwframe_transfer_data((*C.AVFrame)(unsafe.Pointer(dst.CAVFrame)), (*C.AVFrame)(unsafe.Pointer(src.CAVFrame)), C.int(flags)); code < 0 {
-		return avutil.NewErrorFromCode(avutil.ErrorCode(code))
-	}
-	return nil
-}
-
-// TODO: Free !!!!!!!!!!!
-// ************** HWDeviceContent **************
 // ************** FFMPEG >=33 APIS  **************
 
 type CodecParameters struct {

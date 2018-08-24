@@ -11,7 +11,6 @@ package avutil
 //#include <libavutil/parseutils.h>
 //#include <libavutil/common.h>
 //#include <libavutil/eval.h>
-//#include <libavutil/hwcontext.h>
 //
 //#ifdef AV_LOG_TRACE
 //#define GO_AV_LOG_TRACE AV_LOG_TRACE
@@ -143,22 +142,6 @@ const (
 	LossFlagAll        LossFlags = -1
 )
 
-// ***************** HW ******************
-type HWDeviceType C.enum_AVHWDeviceType
-
-const (
-	HWDeviceTypeVDPAU        HWDeviceType = C.AV_HWDEVICE_TYPE_VDPAU
-	HWDeviceTypeCUDA         HWDeviceType = C.AV_HWDEVICE_TYPE_CUDA
-	HWDeviceTypeVAAPI        HWDeviceType = C.AV_HWDEVICE_TYPE_VAAPI
-	HWDeviceTypeDXVA2        HWDeviceType = C.AV_HWDEVICE_TYPE_DXVA2
-	HWDeviceTypeQSV          HWDeviceType = C.AV_HWDEVICE_TYPE_QSV
-	HWDeviceTypeVIDEOTOOLBOX HWDeviceType = C.AV_HWDEVICE_TYPE_VIDEOTOOLBOX
-	HWDeviceTypeNONE         HWDeviceType = C.AV_HWDEVICE_TYPE_NONE
-	HWDeviceTypeD3D11VA      HWDeviceType = C.AV_HWDEVICE_TYPE_D3D11VA
-	HWDeviceTypeDRM          HWDeviceType = C.AV_HWDEVICE_TYPE_DRM
-)
-// ***************** HW ******************
-
 func init() {
 	SetLogLevel(LogLevelQuiet)
 }
@@ -207,6 +190,11 @@ type PixelFormat C.enum_AVPixelFormat
 
 const (
 	PixelFormatNone PixelFormat = C.AV_PIX_FMT_NONE
+	//PixelFormatVAAPI PixelFormat = C.AV_PIX_FMT_VAAPI
+	//PixelFormatDXVA2_VLD PixelFormat = C.AV_PIX_FMT_DXVA2_VLD
+	//PixelFormatD3D11 PixelFormat = C.AV_PIX_FMT_D3D11
+	//PixelFormatVDPAU PixelFormat = C.AV_PIX_FMT_VDPAU
+	//PixelFormatVIDEOTOOLBOX PixelFormat = C.AV_PIX_FMT_VIDEOTOOLBOX
 )
 
 func FindPixelFormatByName(name string) (PixelFormat, bool) {
@@ -1413,11 +1401,4 @@ func boolToCInt(b bool) C.int {
 	return 0
 }
 
-// ***************** HW ******************
-func HWDeviceFindTypeByName(name string) HWDeviceType {
-	cName := C.CString(name)
-	defer C.free(unsafe.Pointer(cName))
-	hwType := (HWDeviceType)(C.av_hwdevice_find_type_by_name(cName))
-	return hwType
-}
-// ***************** HW ******************
+

@@ -951,7 +951,14 @@ func NewIOContextFromC(cCtx unsafe.Pointer) *IOContext {
 
 type IOCtxReadWriteCallback func(buffer []byte, size int) int
 type IOCtxSeekCallback func(offset int64, whence int) int64
-const SeekWhenceSize int = C.AVSEEK_SIZE
+const (
+	SeekWhenceSize int = C.AVSEEK_SIZE
+	AVErrorEOF int = C.AVERROR_EOF
+)
+
+func CBuf2GoBuf (buf *byte, size C.int) []byte {
+	return (*[1 << 30]byte)(unsafe.Pointer(buf))[:size:size]
+}
 
 func NewCustomIOContext(bufferSize, writeFlag int,
 	readCallback, writeCallback IOCtxReadWriteCallback,
@@ -1005,10 +1012,6 @@ func NewCustomIOContext(bufferSize, writeFlag int,
 	}
 	return &IOContext{CAVIOContext: avioCtx,
 		CustomIOContextOpaque: &opaque, customIOContextBuffer: buffer}, nil
-}
-
-func CBuf2GoBuf (buf *byte, size C.int) []byte {
-	return (*[1 << 30]byte)(unsafe.Pointer(buf))[:size:size]
 }
 
 func (ctx *IOContext) Size() int64 {
