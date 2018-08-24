@@ -956,6 +956,11 @@ func (f *Frame) PacketDuration() int64 {
 	return int64(C.av_frame_get_pkt_duration(f.CAVFrame))
 }
 
+func (f *Frame) GetHWFramesCtx() *BufferRef {
+	return (*BufferRef)(f.CAVFrame.hw_frames_ctx)
+}
+
+
 type OptionAccessor struct {
 	obj  unsafe.Pointer
 	fake bool
@@ -1400,5 +1405,7 @@ func boolToCInt(b bool) C.int {
 	}
 	return 0
 }
+
+type BufferRef C.AVBufferRef
 
 

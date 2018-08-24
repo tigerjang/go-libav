@@ -23,12 +23,14 @@ static enum AVPixelFormat CBWrapper_get_format(AVCodecContext *ctx,
 static void set_get_format_callback(AVCodecContext *ctx) {
 	ctx->get_format = CBWrapper_get_format;
 }
+
 */
 import "C"
 import (
 	"unsafe"
 	"syscall"
 	"github.com/tigerjang/go-libav/avutil"
+	//"log"
 )
 
 // ************** HWDeviceContent **************
@@ -44,6 +46,15 @@ const (
 	HWDeviceTypeNONE         HWDeviceType = C.AV_HWDEVICE_TYPE_NONE
 	//HWDeviceTypeD3D11VA      HWDeviceType = C.AV_HWDEVICE_TYPE_D3D11VA
 	//HWDeviceTypeDRM          HWDeviceType = C.AV_HWDEVICE_TYPE_DRM
+)
+
+type HWFrameTransferDirection C.enum_AVHWFrameTransferDirection
+
+const (
+	// Transfer the data from the queried hw frame
+	HWFrameTransferDirectionFrom HWFrameTransferDirection = C.AV_HWFRAME_TRANSFER_DIRECTION_FROM
+	// Transfer the data to the queried hw frame.
+	HWFrameTransferDirectionTo HWFrameTransferDirection = C.AV_HWFRAME_TRANSFER_DIRECTION_TO
 )
 
 func (ctx *Context) GetFormatCallback(callback func(codecCtx *Context, availPxlFmts []string) string) {
@@ -83,7 +94,7 @@ type HWDeviceContext struct {
 	CAVBufferRef *C.AVBufferRef
 }
 
-func (ctx *Context) NewHWDeviceContext(deviceType HWDeviceType, device string, options *avutil.Dictionary, flags int) (*HWDeviceContext, error) {
+func NewHWDeviceContext(deviceType HWDeviceType, device string, options *avutil.Dictionary, flags int) (*HWDeviceContext, error) {
 	var hwDeviceCtx *C.AVBufferRef
 
 	var cDevice *C.char
@@ -102,8 +113,15 @@ func (ctx *Context) NewHWDeviceContext(deviceType HWDeviceType, device string, o
 	if code := int(C.av_hwdevice_ctx_create(&hwDeviceCtx, (C.enum_AVHWDeviceType)(deviceType), cDevice, cOptions, C.int(flags))); code < 0 {
 		return nil, ErrAllocationError
 	}
-	ctx.CAVCodecContext.hw_device_ctx = C.av_buffer_ref(hwDeviceCtx)
 	return &HWDeviceContext{hwDeviceCtx}, nil
+}
+
+func (ctx *Context) SetHWDeviceContext(hwCtx *HWDeviceContext) {
+	ctx.CAVCodecContext.hw_device_ctx = C.av_buffer_ref(hwCtx.CAVBufferRef)
+}
+
+func (ctx *HWDeviceContext) Free() {
+	C.av_free(unsafe.Pointer(ctx.CAVBufferRef))
 }
 
 func HWFrameTransferData(dst, src *avutil.Frame, flags int) error {
@@ -111,6 +129,27 @@ func HWFrameTransferData(dst, src *avutil.Frame, flags int) error {
 		return avutil.NewErrorFromCode(avutil.ErrorCode(code))
 	}
 	return nil
+}
+
+func HWFrameTransferGetFormats(hwframe_ctx_ref *avutil.BufferRef,
+	dir HWFrameTransferDirection, flags int) ([]avutil.PixelFormat, error) {
+	var cRet *avutil.PixelFormat
+
+	if code := C.av_hwframe_transfer_get_formats(
+		(*C.AVBufferRef)(unsafe.Pointer(hwframe_ctx_ref)),
+		C.enum_AVHWFrameTransferDirection(dir),
+		(**C.enum_AVPixelFormat)(unsafe.Pointer(&cRet)),
+		C.int(flags)); code < 0 {
+		return nil, avutil.NewErrorFromCode(avutil.ErrorCode(code))
+	}
+	eleSize := unsafe.Sizeof(*cRet)
+	arrLen := 0
+	for addr := uintptr(unsafe.Pointer(cRet));
+			*((*avutil.PixelFormat)(unsafe.Pointer(addr))) != avutil.PixelFormatNone;
+			addr += eleSize {
+		arrLen += 1
+	}
+	return (*[1 << 30]avutil.PixelFormat)(unsafe.Pointer(cRet))[:arrLen:arrLen], nil
 }
 
 // TODO: Free !!!!!!!!!!!
