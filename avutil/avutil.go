@@ -791,16 +791,27 @@ func (f *Frame) GetBufferWithAlignment(alignment int) error {
 	return nil
 }
 
-func (f *Frame) Data(index int) unsafe.Pointer {
-	return unsafe.Pointer(f.CAVFrame.data[index])
+//func (f *Frame) Data(index int) unsafe.Pointer {
+//	return unsafe.Pointer(f.CAVFrame.data[index])
+//}
+
+func (f *Frame) Data() []*uint8 {
+	//return unsafe.Pointer(f.CAVFrame.data)
+	//return ([C.AV_NUM_DATA_POINTERS]*C.uint8_t)(f.CAVFrame.data)
+	//return ([C.AV_NUM_DATA_POINTERS]*uint8)(unsafe.ArbitraryType(f.CAVFrame.data))
+	return (*[C.AV_NUM_DATA_POINTERS]*uint8)(unsafe.Pointer(&(f.CAVFrame.data)))[:C.AV_NUM_DATA_POINTERS:C.AV_NUM_DATA_POINTERS]
 }
 
 func (f *Frame) SetData(index int, data unsafe.Pointer) {
 	f.CAVFrame.data[index] = (*C.uint8_t)(data)
 }
 
-func (f *Frame) LineSize(index int) int {
-	return int(f.CAVFrame.linesize[index])
+//func (f *Frame) LineSize(index int) int {
+//	return int(f.CAVFrame.linesize[index])
+//}
+
+func (f *Frame) LineSize() []int32 {
+	return (*[C.AV_NUM_DATA_POINTERS]int32)(unsafe.Pointer(&(f.CAVFrame.linesize)))[:C.AV_NUM_DATA_POINTERS:C.AV_NUM_DATA_POINTERS]
 }
 
 func (f *Frame) SetLineSize(index int, lineSize int) {

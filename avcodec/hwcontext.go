@@ -133,7 +133,7 @@ func HWFrameTransferData(dst, src *avutil.Frame, flags int) error {
 
 func HWFrameTransferGetFormats(hwframe_ctx_ref *avutil.BufferRef,
 	dir HWFrameTransferDirection, flags int) ([]avutil.PixelFormat, error) {
-	var cRet *avutil.PixelFormat
+	var cRet unsafe.Pointer
 
 	if code := C.av_hwframe_transfer_get_formats(
 		(*C.AVBufferRef)(unsafe.Pointer(hwframe_ctx_ref)),
@@ -142,15 +142,13 @@ func HWFrameTransferGetFormats(hwframe_ctx_ref *avutil.BufferRef,
 		C.int(flags)); code < 0 {
 		return nil, avutil.NewErrorFromCode(avutil.ErrorCode(code))
 	}
-	eleSize := unsafe.Sizeof(*cRet)
 	arrLen := 0
-	for addr := uintptr(unsafe.Pointer(cRet));
-			*((*avutil.PixelFormat)(unsafe.Pointer(addr))) != avutil.PixelFormatNone;
-			addr += eleSize {
+
+	tmpArrPtr := (*[1 << 30]avutil.PixelFormat)(cRet)
+	for _i := 0; tmpArrPtr[_i] != avutil.PixelFormatNone; _i ++ {
 		arrLen += 1
 	}
-	return (*[1 << 30]avutil.PixelFormat)(unsafe.Pointer(cRet))[:arrLen:arrLen], nil
+	return tmpArrPtr[:arrLen:arrLen], nil
 }
 
-// TODO: Free !!!!!!!!!!!
 // ************** HWDeviceContent **************
